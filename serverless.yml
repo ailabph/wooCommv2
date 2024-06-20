@@ -1,0 +1,29 @@
+service: woocommerce-api-V2
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ap-southeast-2
+
+plugins:
+  - serverless-plugin-common-excludes
+  - serverless-plugin-include-dependencies
+
+functions:
+  app:
+    handler: dist/main.handler
+    events:
+      - http:
+          path: /
+          method: any
+      - http:
+          path: /{proxy+}
+          method: any
+      # - http:
+      #     path: /key/add-key
+      #     method: post
+      #     cors: true
+      # - http:
+      #     path: /product/refer_product
+      #     method: get
+      #     cors: true

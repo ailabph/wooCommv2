@@ -1,0 +1,134 @@
+---
+trigger:
+  branches:
+    include:
+      - main
+pool:
+  vmImage: ubuntu-latest
+name: Set dynamically below in a task
+variables:
+  version.MajorMinor: $(MajorVersion).$(MinorVersion)
+  version.Patch: $(Build.BuildID)
+  stableVersionNumber: $(version.MajorMinor).$(version.Patch)
+  prereleaseVersionNumber: Set dynamically below in a task
+  versionNumber: Set dynamically below in a task
+  isMainBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+stages:
+  - stage: Versioning_Stage
+    jobs:
+      - job: Versioning
+        steps:
+          - task: PowerShell@2
+            displayName: Set the prereleaseVersionNumber variable value
+            inputs:
+              targetType: inline
+              script: >
+                [string] $dateTime = (Get-Date -Format 'yyyyMMddHHmmss')
+
+                [string] $prereleaseVersionNumber = "$(stableVersionNumber)-rc.$(Build.SourceBranchName).$dateTime"
+
+                Write-Host "Setting the prerelease version number variable to '$prereleaseVersionNumber'."
+
+                Write-Host "##vso[task.setvariable variable=prereleaseVersionNumber]$prereleaseVersionNumber"
+          - task: PowerShell@2
+            displayName: Set the versionNumber to the stable or prerelease version number
+              based on if the 'main' branch is being built or not
+            inputs:
+              targetType: inline
+              script: >
+                [bool] $isMainBranch = $$(isMainBranch)
+
+                [string] $versionNumber = "$(prereleaseVersionNumber)"
+
+                if ($isMainBranch)
+
+                {
+                  $versionNumber = "$(stableVersionNumber)"
+                }
+
+                Write-Host "Setting the version number to use to '$versionNumber'."
+
+                Write-Host "##vso[task.setvariable variable=versionNumber]$versionNumber"
+          - task: PowerShell@2
+            displayName: Set the name of the build
+            inputs:
+              targetType: inline
+              script: |
+                [string] $buildName = "$(versionNumber)"
+                echo $(Build.DefinitionName)
+                Write-Host "Setting the name of the build to '$buildName'."
+                Write-Host "##vso[build.updatebuildnumber]$buildName"
+          - task: PowerShell@2
+            inputs:
+              targetType: inline
+              script: |
+                [string] $outputName = "$(versionNumber)"
+                Write-Host "Setting the output Variable to '$outputName'."
+                Write-Host "##vso[task.setvariable variable=versionNumberFromStage1;isoutput=true]$outputName"
+            displayName: stageOutput
+            name: stageOutput
+  - stage: Build_Stage
+    dependsOn: Versioning_Stage
+    variables:
+      versionNumberFromStage1: $[ stageDependencies.Versioning_Stage.Versioning.outputs['stageOutput.versionNumberFromStage1'] ]
+    jobs:
+      - job: Build
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 20.10.0
+            displayName: Install Node.js    
+          - script: |
+              npm i -g rimraf
+            displayName: Install Rimraf
+          - script: |
+              npm install
+              npm run build
+            displayName: Build Backend
+         #- script: |
+         #    npm run  test:ci
+         #  displayName: Test Backend
+         #- script: |
+         #    npm run  test:cov
+         #  displayName: Generate Coverage   
+          - script: |
+              #rm -rf node_modules/
+              npm ci --omit=dev
+            displayName: Clean node modules
+          - task: PublishTestResults@2
+            displayName: 'Publish test results to pipeline'
+            condition: succeededOrFailed() # because otherwise we won't know what tests failed
+            inputs:
+              testResultsFiles: 'coverage/junit.xml'
+          #- task: PublishCodeCoverageResults@2
+          #  displayName: 'Publish coverage to pipeline'
+          #  condition: succeededOrFailed() # because otherwise we won't know what tests failed
+          #  inputs:
+          #    summaryFileLocation:  'coverage/cobertura-coverage.xml'
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)
+              contents: |
+                package.json
+                node_modules/**
+                !node_modules/aws-sdk/**      
+              targetFolder: $(Build.ArtifactStagingDirectory)
+            displayName: Copy project files
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)/dist
+              contents: '**'
+              targetFolder: $(Build.ArtifactStagingDirectory)
+            displayName: Copy project files from Nest dist directory to root
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: $(Build.ArtifactStagingDirectory)
+              includeRootFolder: false
+              archiveType: zip
+              archiveFile: $(Build.ArtifactStagingDirectory)/package/irefer-b2c-api-$(versionNumberFromStage1).zip
+          - task: PublishPipelineArtifact@1
+            inputs:
+              #artifactName: $(Build.DefinitionName)-$(versionNumberFromStage1)
+              targetPath: $(Build.ArtifactStagingDirectory)/package
+              publishLocation: pipeline
+            displayName: Publish artifact
