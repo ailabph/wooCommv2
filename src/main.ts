@@ -34,6 +34,7 @@ async function bootstrap() {
     .setVersion('2.0')
     .addTag('i-Refer')
     .addBearerAuth()
+    .addServer('/api')
     .build();
   const document = SwaggerModule.createDocument(app, options);
   SwaggerModule.setup('api', app, document);
